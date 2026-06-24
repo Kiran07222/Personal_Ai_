@@ -1,63 +1,48 @@
-
 from groq import Groq
-import os 
 from sentence_transformers import SentenceTransformer
-import re
 import numpy as np
 import faiss
+import os
+
 client = Groq(api_key=os.getenv("groq_api_key"))
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-prompt = input("Nani: ")
-model= SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-with open("C:/Users/nani3/Desktop/sample.txt", "r") as f:
+# Load and chunk (no destructive preprocessing)
+with open("C:/Users/nani3/Desktop/sample.txt", "r", encoding="utf-8") as f:
     file_content = f.read()
-file_content=file_content.lower()
-file_content=re.sub(r'[^a-z\s]','',file_content)
 
-chunks=file_content.split("\n")
+chunks = [c.strip() for c in file_content.split("\n\n") if c.strip()]
 
-embdding=model.encode(chunks)
+# Build FAISS index
+embeddings = model.encode(chunks)
+index = faiss.IndexFlatL2(embeddings.shape[1])
+index.add(np.array(embeddings, dtype="float32"))
 
-dimension=embdding.shape[1]
-index=faiss.IndexFlatL2(dimension)
-index.add(np.array(embdding,dtype="float32"))
+print("RAG ready. Type 'exit' to quit.\n")
 
+while True:
+    prompt = input("Nani: ").strip()
+    if prompt.lower() == "exit":
+        break
 
+    # Retrieve top-3 chunks
+    q_emb = model.encode([prompt])
+    _, indices = index.search(np.array(q_emb, dtype="float32"), 3)
+    context = "\n".join(chunks[i] for i in indices[0])
 
-
-while(1):
-    q_embdding=model.encode([prompt])
-    distance ,indeces= index.search(np.array(q_embdding,dtype="float32"),3)
-    llm_text=""
-    for i in indeces[0]:
-        llm_text+=chunks[i]+"\n"
-
-
+    # Query LLM
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
             {
-            "role": "system",
-            "content": "Your name is Nani and you are giving answers to your friends."
+                "role": "system",
+                "content": (
+                    "Your name is Nani and you answer your friends' questions.\n\n"
+                    f"Use this context to answer:\n{context}"
+                )
             },
-            {
-            "role": "system",
-            "content":llm_text
-            },
-            {
-            "role": "user",
-            "content": prompt
-            }
+            {"role": "user", "content": prompt}
         ],
         max_completion_tokens=1000
     )
-    print(response.choices[0].message.content)
-    n=int(input(" 0 to stop: "))
-    
-    if n==0:
-        break
-    else:
-        prompt=input("enter the message :")
-
-
+    print("\nNani:", response.choices[0].message.content, "\n")
